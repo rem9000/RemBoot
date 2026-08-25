@@ -1,0 +1,12 @@
+/target/
+/shots/
+/dist/
+__pycache__/
+*.pyc
+/vmware/*.vmdk
+/vmware/*.log
+/vmware/*.nvram
+/vmware/*.vmsd
+/vmware/*.vmss
+/vmware/*.vmem
+/vmware/*.lck/

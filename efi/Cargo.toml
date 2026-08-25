@@ -1,0 +1,12 @@
+[package]
+name = "remboot"
+version = "0.1.0"
+edition = "2021"
+description = "RemBoot: native UEFI animated boot menu (front-end for Ventoy)"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+remboot-core = { path = "../core" }
+log = { version = "0.4", default-features = false }
+uefi = { version = "0.39.0", features = ["alloc", "global_allocator", "panic_handler", "logger", "log-debugcon"] }
+uefi-raw = "0.15"

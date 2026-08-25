@@ -1,0 +1,52 @@
+# RemBoot menu config — place as "remboot.conf" in the root of the volume
+# that holds your ISOs (the exFAT data partition), or on the ESP.
+#
+# One record per ISO. Keys are case-insensitive; blank lines and lines
+# starting with # or ; are ignored. Only ISO: is required.
+#
+#   ISO:      the exact filename on disk (this is what actually boots)
+#   NAME:     clean display name (defaults to the filename without .iso)
+#   VERSION:  shown right-aligned, dimmed
+#   POSITION: menu order; lower first. Entries without a POSITION come after
+#             the positioned ones, sorted alphabetically by name.
+
+ISO: Win11_25H2_Dutch_x64_v2.iso
+NAME: Windows 11 25H2 (NL)
+VERSION: 25H2
+POSITION: 1
+
+ISO: ubuntu-26.04-desktop-amd64.iso
+NAME: Ubuntu Desktop
+VERSION: 26.04 LTS
+POSITION: 2
+
+ISO: memtest.iso
+NAME: MemTest86+
+VERSION: 8.10
+POSITION: 3
+
+ISO: systemrescue-13.02-amd64.iso
+NAME: SystemRescue
+VERSION: 13.02
+POSITION: 4
+
+ISO: gparted-live-1.8.1-3-amd64.iso
+NAME: GParted Live
+VERSION: 1.8.1
+POSITION: 5
+
+ISO: HBCD_PE_x64.iso
+NAME: Hiren's BootCD PE
+VERSION: x64
+
+ISO: rescuezilla-2.6.2-64bit.resolute.iso
+NAME: Rescuezilla
+VERSION: 2.6.2
+
+ISO: shredos-2025.11_31_i686_v0.42_20260716_lite.iso
+NAME: ShredOS
+VERSION: 0.42
+
+ISO: Dell_Pro_Max_with_GB10_FCM1253_WW_DGX_OS7_OTA3_Recovery_Image.iso
+NAME: Dell Pro Max Recovery (DGX OS7)
+VERSION: OTA3

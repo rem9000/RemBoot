@@ -1,0 +1,10 @@
+[package]
+name = "remboot-core"
+version = "0.1.0"
+edition = "2021"
+description = "Pure (no_std + alloc) logic for RemBoot: scene math, easing, menu state machine"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+fontdue = { version = "0.9.4", default-features = false, features = ["hashbrown"] }
+libm = "0.2"

@@ -1,0 +1,135 @@
+# RemBoot
+
+A UEFI boot menu (`BOOTX64.EFI`) for a USB stick: put your `*.iso` files on it,
+boot from it, pick one, it boots. Works with Linux live/installer ISOs, WinPE
+(Hiren's, HBCD), and rescue tools. No bootloader install step; the stick just
+needs the app plus your ISOs.
+
+## Requirements
+
+- A 64-bit UEFI machine. Boot the USB from the firmware boot menu (F12 / F9 / Esc).
+- **Secure Boot must be off** — the app is unsigned.
+- WinPE ISOs (Hiren's, HBCD) load `boot.wim` into a RAM disk; give the machine
+  a few GB of free RAM or Windows Boot Manager stops with `0xc0000017`.
+
+## USB layout
+
+Two partitions:
+
+| # | Filesystem | Contents |
+|---|------------|----------|
+| 1 | FAT32 (~512 MB) | `\EFI\BOOT\BOOTX64.EFI` |
+| 2 | exFAT (rest) | your `*.iso` files (+ optional `remboot.conf`) |
+
+exFAT is required for the data partition because several ISOs exceed FAT32's
+4 GB file limit.
+
+## Create the USB
+
+### Windows script
+
+1. Build the app (produces `dist\EFI\BOOT\BOOTX64.EFI`):
+   ```bash
+   wsl -d Ubuntu -u root -- bash /mnt/c/GitHub/RemBoot/tools/build.sh
+   ```
+2. Find the USB's disk number in an **elevated** PowerShell:
+   ```powershell
+   Get-Disk
+   ```
+3. Provision it — **this erases the whole disk**:
+   ```powershell
+   .\tools\make-usb.ps1 -DiskNumber 2 -IsoSource "C:\path\to\your\isos"
+   ```
+   Omit `-IsoSource` to install only the app and copy ISOs later in Explorer.
+
+### Manual (diskpart)
+
+<details><summary>Without the script</summary>
+
+Elevated `diskpart` (replace <code>disk N</code> with your USB — wrong number wipes the wrong drive):
+
+```
+list disk
+select disk N
+clean
+convert gpt
+create partition efi size=512
+format fs=fat32 quick label=REMBOOT
+assign letter=S
+create partition primary
+format fs=exfat quick label=REMBOOT_DATA
+assign letter=D
+exit
+```
+
+```powershell
+mkdir S:\EFI\BOOT
+copy dist\EFI\BOOT\BOOTX64.EFI S:\EFI\BOOT\BOOTX64.EFI
+copy remboot.conf.example D:\remboot.conf   REM optional
+REM copy your *.iso files to D:\
+```
+</details>
+
+### Existing Ventoy stick
+
+Same layout (exFAT data + small FAT boot partition). Back up
+`VTOYEFI\EFI\BOOT\BOOTX64.EFI`, replace it with RemBoot's `BOOTX64.EFI`; your
+existing ISOs are read directly.
+
+## Managing ISOs
+
+Add or remove ISOs by copying files to the exFAT partition — nothing else to do.
+
+Entries are labelled by filename by default. An optional `remboot.conf` (on the
+exFAT partition or the FAT boot partition) sets clean names, versions and order
+— see [remboot.conf.example](remboot.conf.example):
+
+```ini
+ISO: memtest.iso
+NAME: MemTest86+
+VERSION: 8.10
+POSITION: 3
+```
+
+Keys are case-insensitive; `#`/`;` are comments; only `ISO:` is required.
+Entries with a `POSITION` come first (ascending), the rest sort alphabetically.
+The filename is always what boots, so labels never affect booting.
+
+To edit without touching the file: press **E** on an entry, change
+name/version/position, **ENTER** saves (to the boot partition), ESC cancels,
+`↑↓` switches fields.
+
+## Build from source
+
+Everything builds through WSL2 Ubuntu (as root): Rust stable + the
+`x86_64-unknown-uefi` target, QEMU + OVMF for testing, `mtools`/`exfatprogs`
+for the disk images.
+
+```bash
+# build the app + a bootable FAT ESP image + dist/ for the USB script
+wsl -d Ubuntu -u root -- bash /mnt/c/GitHub/RemBoot/tools/build.sh
+
+# unit tests (pure logic: exFAT, config, menu, easing)
+wsl -d Ubuntu -u root -- bash /mnt/c/GitHub/RemBoot/tools/test.sh
+
+# boot in QEMU (REMBOOT_MEM=8192 for heavy WinPE ISOs)
+wsl -d Ubuntu -u root -- bash /mnt/c/GitHub/RemBoot/tools/run-qemu.sh scenarios/real.sh
+```
+
+Layout: `core/` is UEFI-free, host-testable logic (exFAT reader, `remboot.conf`
+parser, menu state, rendering math); `efi/` is the UEFI binary (`main.rs`,
+`vdisk.rs` = the virtual-CD that presents an ISO to the firmware and chainloads
+it, `gfx.rs`).
+
+## How it boots an ISO
+
+UEFI firmware can't read exFAT, so RemBoot reads the ISO's extents itself
+([core/src/exfat.rs](core/src/exfat.rs)), exposes the file to the firmware as a
+virtual CD served on demand ([efi/src/vdisk.rs](efi/src/vdisk.rs)), lets the
+firmware mount it (El Torito + FAT), and chainloads the ISO's own
+`\EFI\BOOT\BOOTX64.EFI`. Nothing is copied into RAM.
+
+## License
+
+GPL-3.0 (see [LICENSE](LICENSE)). Bundles JetBrains Mono under the SIL Open
+Font License ([assets/fonts/OFL.txt](assets/fonts/OFL.txt)).
