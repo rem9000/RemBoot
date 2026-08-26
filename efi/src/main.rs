@@ -32,6 +32,23 @@ const FRAME_DT: f32 = 1.0 / 30.0;
 /// Confirm modal open/close transition time, seconds.
 const CONFIRM_T: f32 = 0.18;
 
+/// SBAT metadata. shim (Secure Boot, >=15.7) refuses to load a binary that
+/// lacks a valid `.sbat` section, even with a correct MOK signature. Baked in
+/// at link time (objcopy on this PE lands the section at a bad address).
+const SBAT_DATA: &[u8] = b"sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md\nremboot,1,RemBoot,remboot,1,https://github.com/rem9000/RemBoot\n";
+
+#[used]
+#[link_section = ".sbat"]
+static SBAT: [u8; SBAT_DATA.len()] = {
+    let mut arr = [0u8; SBAT_DATA.len()];
+    let mut i = 0;
+    while i < SBAT_DATA.len() {
+        arr[i] = SBAT_DATA[i];
+        i += 1;
+    }
+    arr
+};
+
 /// Pick 1280x800, else 1024x768, else keep the firmware's current mode.
 fn pick_mode(gop: &GraphicsOutput) -> Option<Mode> {
     let mut fallback: Option<Mode> = None;

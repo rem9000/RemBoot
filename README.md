@@ -10,7 +10,8 @@ needs the app plus your ISOs.
 ## Requirements
 
 - A 64-bit UEFI machine. Boot the USB from the firmware boot menu (F12 / F9 / Esc).
-- **Secure Boot must be off** — the app is unsigned.
+- **Secure Boot**: off by default (the app is unsigned). It can be left *on*
+  with a signed build + a one-time key enrolment — see [Secure Boot](#secure-boot).
 - WinPE ISOs (Hiren's, HBCD) load `boot.wim` into a RAM disk; give the machine
   a few GB of free RAM or Windows Boot Manager stops with `0xc0000017`.
 
@@ -120,6 +121,35 @@ name/version/position, **ENTER** saves (to the boot partition), ESC cancels,
 `↑↓` switches fields.
 
 ![config editor](docs/editor.png)
+
+## Secure Boot
+
+RemBoot can run with Secure Boot **on**, using the standard signed-shim + MOK
+chain (the same mechanism Linux distros and Ventoy use). Build the signed
+layout in WSL:
+
+```bash
+wsl -d Ubuntu -u root -- bash /mnt/c/GitHub/RemBoot/tools/secureboot.sh
+```
+
+This produces `/root/remboot-esp-sb.img` with a Microsoft-signed shim as
+`BOOTX64.EFI`, MokManager, RemBoot signed with a key generated locally in
+`dist/keys/` (kept private, gitignored), and `ENROLL_REMBOOT.cer` (the key to
+enrol). Put those four files on the FAT boot partition instead of the plain
+`BOOTX64.EFI`.
+
+The first boot does a one-time key enrolment (shim can't trust RemBoot yet):
+
+1. *Verification failed* → **OK**
+2. *Press any key to perform MOK management* → press a key
+3. **Enroll key from disk** → the `REMBOOT` volume → `EFI/BOOT/ENROLL_REMBOOT.cer`
+4. **Continue** → **Yes** → **Reboot**
+
+After that RemBoot boots with Secure Boot on. ISOs that ship a signed
+bootloader (Windows, Ubuntu, Fedora, GParted, …) chainload fine under Secure
+Boot; ISOs with an unsigned bootloader won't — turn Secure Boot off for those
+(even Ventoy has this limit). Verified in QEMU with SB-enabled OVMF: RemBoot
+boots after enrolment, and GParted Live chainloads to its GRUB menu.
 
 ## Build from source
 
