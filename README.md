@@ -17,8 +17,9 @@ needs the app plus your ISOs.
 
 ## Create the USB
 
-Grab a prebuilt `BOOTX64.EFI` from the [Releases](../../releases) page, or
-build it yourself (see [Build from source](#build-from-source)).
+The [Releases](../../releases) page has prebuilt downloads — `BOOTX64.EFI` and
+the `remboot-usb` tool (`.exe` for Windows, `.deb` for Debian/Ubuntu, and a raw
+Linux binary) — or build from source (see [Build from source](#build-from-source)).
 
 ### Simplest — one FAT32 partition (ISOs under 4 GB)
 
@@ -65,7 +66,8 @@ exFAT one.
 
 ### Cross-platform tool (Linux / macOS / Windows)
 
-`remboot-usb` provisions a stick on any OS. Build it with
+`remboot-usb` provisions a stick on any OS. Download it from
+[Releases](../../releases) (`.exe`, `.deb`, or a Linux binary) or build it with
 `cargo build -p remboot-usb`, then either use the graphical interface:
 
 ```bash

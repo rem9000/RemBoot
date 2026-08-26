@@ -9,19 +9,61 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  efi:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-uefi
-      - name: Build app (UEFI)
-        run: cargo build -p remboot --release --target x86_64-unknown-uefi
-      - name: Stage BOOTX64.EFI
-        run: cp target/x86_64-unknown-uefi/release/remboot.efi BOOTX64.EFI
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+      - run: cargo build -p remboot --release --target x86_64-unknown-uefi
+      - run: cp target/x86_64-unknown-uefi/release/remboot.efi BOOTX64.EFI
+      - uses: actions/upload-artifact@v4
         with:
-          files: BOOTX64.EFI
+          name: efi
+          path: BOOTX64.EFI
+
+  linux-tool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-deb --locked
+      - run: cargo build -p remboot-usb --release
+      - run: cargo deb -p remboot-usb --no-build
+      - name: Stage artifacts
+        run: |
+          mkdir out
+          cp target/release/remboot-usb out/remboot-usb-linux-x86_64
+          cp target/debian/*.deb out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-tool
+          path: out/*
+
+  windows-tool:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p remboot-usb --release
+      - name: Stage artifact
+        shell: bash
+        run: cp target/release/remboot-usb.exe remboot-usb-windows-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-tool
+          path: remboot-usb-windows-x86_64.exe
+
+  release:
+    needs: [efi, linux-tool, windows-tool]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
           generate_release_notes: true

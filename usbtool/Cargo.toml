@@ -11,3 +11,12 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+
+[package.metadata.deb]
+maintainer = "rem9000 <rem9000@users.noreply.github.com>"
+copyright = "2026, Rem"
+license-file = ["../LICENSE", "0"]
+section = "utils"
+priority = "optional"
+depends = "gdisk, dosfstools, exfatprogs"
+extended-description = "Provision a USB stick as a RemBoot drive: partition (FAT32 ESP + exFAT data, or a single FAT32), format, and copy the boot app plus your ISOs. Includes a local web GUI (remboot-usb gui)."
