@@ -6,12 +6,14 @@
 //! DESTRUCTIVE: `create` erases the whole target disk.
 
 mod disk;
+mod gui;
 mod provision;
 mod util;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use util::human;
 
 #[derive(Parser)]
 #[command(name = "remboot-usb", about = "Provision a USB stick for RemBoot")]
@@ -26,6 +28,12 @@ enum Cmd {
     List,
     /// Partition + format a disk and install RemBoot onto it. ERASES the disk.
     Create(CreateArgs),
+    /// Open the graphical interface (a local web page).
+    Gui {
+        /// Port for the local web server.
+        #[arg(long, default_value_t = 8722)]
+        port: u16,
+    },
 }
 
 #[derive(clap::Args)]
@@ -33,35 +41,35 @@ pub struct CreateArgs {
     /// Target disk id (see `list`): a device like /dev/sdb, a Windows disk
     /// number, or a macOS disk identifier.
     #[arg(long)]
-    disk: String,
+    pub disk: String,
 
     /// Path to BOOTX64.EFI (default: ./dist/EFI/BOOT/BOOTX64.EFI).
     #[arg(long, default_value = "dist/EFI/BOOT/BOOTX64.EFI")]
-    efi: PathBuf,
+    pub efi: PathBuf,
 
     /// Folder of *.iso files to copy onto the data partition.
     #[arg(long)]
-    isos: Option<PathBuf>,
+    pub isos: Option<PathBuf>,
 
     /// remboot.conf to seed (default: ./remboot.conf.example if present).
     #[arg(long)]
-    config: Option<PathBuf>,
+    pub config: Option<PathBuf>,
 
     /// Single FAT32 partition (no exFAT). Only for ISOs under 4 GB.
     #[arg(long)]
-    simple: bool,
+    pub simple: bool,
 
     /// Size of the FAT32 boot partition, MiB.
     #[arg(long, default_value_t = 512)]
-    esp_mb: u64,
+    pub esp_mb: u64,
 
     /// Proceed without the interactive confirmation.
     #[arg(long)]
-    yes: bool,
+    pub yes: bool,
 
     /// Operate on a non-removable disk (dangerous; off by default).
     #[arg(long)]
-    allow_internal: bool,
+    pub allow_internal: bool,
 }
 
 fn main() -> ExitCode {
@@ -86,6 +94,10 @@ fn main() -> ExitCode {
             Err(e) => fail(&e),
         },
         Cmd::Create(args) => match run_create(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => fail(&e),
+        },
+        Cmd::Gui { port } => match gui::serve(port) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(&e),
         },
@@ -139,17 +151,6 @@ fn confirm(id: &str) -> Result<bool, String> {
     let mut line = String::new();
     std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
     Ok(line.trim() == format!("ERASE {id}"))
-}
-
-fn human(bytes: u64) -> String {
-    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut v = bytes as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < U.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    format!("{v:.1} {}", U[i])
 }
 
 fn fail(msg: &str) -> ExitCode {

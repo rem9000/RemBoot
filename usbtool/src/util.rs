@@ -35,3 +35,15 @@ pub fn output<S: AsRef<OsStr>>(cmd: &str, args: &[S]) -> Result<String, String> 
 pub fn try_run<S: AsRef<OsStr>>(cmd: &str, args: &[S]) {
     let _ = Command::new(cmd).args(args).status();
 }
+
+/// Human-readable byte size.
+pub fn human(bytes: u64) -> String {
+    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = bytes as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < U.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    format!("{v:.1} {}", U[i])
+}

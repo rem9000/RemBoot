@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RemBoot USB</title>
+<style>
+  :root {
+    --bg:#04060b; --panel:rgba(10,16,28,.72); --line:rgba(125,180,255,.14);
+    --cyan:#22d3ee; --indigo:#818cf8; --text:#dbe7ff; --dim:#8ea3c8;
+    --faint:#5b6c8f; --amber:#fbbf24; --danger:#f87171;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:
+      radial-gradient(60vw 60vh at 15% 10%, rgba(34,211,238,.10), transparent 60%),
+      radial-gradient(60vw 60vh at 85% 90%, rgba(129,140,248,.10), transparent 60%),
+      var(--bg);
+    color:var(--text); font:15px/1.5 "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    min-height:100vh;
+  }
+  .wrap { max-width:760px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-weight:700; letter-spacing:.35em; font-size:26px; margin:0 0 4px; }
+  h1 b { color:var(--cyan); }
+  .sub { color:var(--faint); letter-spacing:.25em; font-size:12px; text-transform:uppercase; margin-bottom:28px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px 22px; margin-bottom:18px; }
+  .card h2 { font-size:12px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin:0 0 14px; font-weight:500; }
+  .row { display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:9px; cursor:pointer; }
+  .row:hover { background:rgba(125,180,255,.05); }
+  .row.sel { background:linear-gradient(90deg, rgba(34,211,238,.18), rgba(129,140,248,.10)); border:1px solid rgba(34,211,238,.4); }
+  .row .name { flex:1; }
+  .row .size { color:var(--dim); }
+  .tag { font-size:11px; padding:2px 8px; border-radius:20px; }
+  .tag.rm { color:var(--cyan); border:1px solid rgba(34,211,238,.4); }
+  .tag.int { color:var(--amber); border:1px solid rgba(251,191,36,.4); }
+  label.opt { display:flex; align-items:center; gap:10px; padding:8px 0; color:var(--dim); }
+  input[type=text], input[type=number] {
+    background:#070b14; border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:8px 10px; font:inherit; width:100%;
+  }
+  input[type=number] { width:120px; }
+  .field { margin:10px 0; }
+  .field .k { color:var(--faint); font-size:12px; text-transform:uppercase; letter-spacing:.12em; margin-bottom:5px; }
+  button {
+    font:inherit; border:none; border-radius:10px; padding:12px 20px; cursor:pointer;
+    background:linear-gradient(90deg, var(--cyan), var(--indigo)); color:#04121b; font-weight:700;
+  }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--dim); font-weight:400; padding:8px 14px; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .danger-note { color:var(--danger); font-size:13px; margin:10px 0; }
+  #log { white-space:pre-wrap; background:#070b14; border:1px solid var(--line); border-radius:8px; padding:12px; color:var(--dim); min-height:44px; }
+  .muted { color:var(--faint); font-size:13px; }
+  .bar { display:flex; gap:12px; align-items:center; }
+  .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--cyan); border-radius:50%; animation:s 0.8s linear infinite; display:none; }
+  @keyframes s { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><b>R</b>EMBOOT USB</h1>
+  <div class="sub">Make a bootable RemBoot stick</div>
+
+  <div class="card">
+    <h2>1 · Choose the USB <button class="ghost" onclick="loadDisks()" style="float:right">refresh</button></h2>
+    <div id="disks" class="muted">scanning…</div>
+  </div>
+
+  <div class="card">
+    <h2>2 · What goes on it</h2>
+    <div class="field"><div class="k">ISO folder (optional)</div>
+      <input id="isos" type="text" placeholder="e.g. C:\Users\me\Desktop\iso  —  copies every *.iso"></div>
+    <div class="field"><div class="k">BOOTX64.EFI</div>
+      <input id="efi" type="text" value="dist/EFI/BOOT/BOOTX64.EFI"></div>
+    <label class="opt"><input id="simple" type="checkbox"> Single FAT32 partition (only if every ISO is under 4 GB)</label>
+    <div class="field" id="espwrap"><div class="k">Boot partition size (MiB)</div>
+      <input id="esp" type="number" value="512" min="64"></div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Write</h2>
+    <div class="danger-note">This <b>erases the whole selected disk</b>.</div>
+    <label class="opt"><input id="ack" type="checkbox" onchange="sync()"> I understand — erase the selected disk</label>
+    <label class="opt"><input id="allow" type="checkbox"> Allow a non-removable disk (dangerous)</label>
+    <div class="bar" style="margin-top:12px">
+      <button id="go" disabled onclick="create()">Create USB</button>
+      <div class="spin" id="spin"></div>
+    </div>
+    <div style="margin-top:14px"><div id="log">—</div></div>
+  </div>
+  <div class="muted">Tip: run this tool as Administrator / root so it can write to the disk.</div>
+</div>
+
+<script>
+let selected = null;
+function el(id){ return document.getElementById(id); }
+
+async function loadDisks(){
+  el('disks').textContent = 'scanning…';
+  try {
+    const r = await fetch('/api/disks'); const j = await r.json();
+    if (!j.disks.length){ el('disks').innerHTML = '<div class="muted">No disks found. Plug in a USB and refresh.</div>'; return; }
+    el('disks').innerHTML = '';
+    for (const d of j.disks){
+      const row = document.createElement('div'); row.className = 'row';
+      const tag = d.removable ? '<span class="tag rm">removable</span>'
+                : '<span class="tag int">internal</span>';
+      row.innerHTML = `<span class="name">${esc(d.id)} · ${esc(d.model)}</span>
+                       <span class="size">${esc(d.human)}</span> ${tag}`;
+      row.onclick = () => { selected = d; el('allow').checked = false;
+        [...document.querySelectorAll('.row')].forEach(x=>x.classList.remove('sel'));
+        row.classList.add('sel'); sync(); };
+      el('disks').appendChild(row);
+    }
+  } catch(e){ el('disks').textContent = 'error: ' + e; }
+}
+function sync(){ el('go').disabled = !(selected && el('ack').checked); }
+function esc(s){ return (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+async function create(){
+  if (!selected) return;
+  if (!confirm(`Erase ${selected.id} and install RemBoot?`)) return;
+  const p = new URLSearchParams({
+    disk: selected.id, efi: el('efi').value, isos: el('isos').value,
+    simple: el('simple').checked ? '1':'0', esp_mb: el('esp').value,
+    allow_internal: el('allow').checked ? '1':'0',
+  });
+  el('go').disabled = true; el('spin').style.display='inline-block';
+  el('log').textContent = 'Working… partitioning, formatting and copying. This can take a while for large ISOs.';
+  try {
+    const r = await fetch('/api/create?' + p.toString(), { method:'POST' });
+    const j = await r.json();
+    el('log').style.color = j.ok ? 'var(--cyan)' : 'var(--danger)';
+    el('log').textContent = j.message;
+  } catch(e){ el('log').textContent = 'error: ' + e; }
+  el('spin').style.display='none'; sync();
+}
+el('simple').addEventListener('change', ()=>{ el('espwrap').style.display = el('simple').checked ? 'none':'block'; });
+loadDisks();
+</script>
+</body>
+</html>
