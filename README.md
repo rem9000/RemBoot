@@ -16,6 +16,9 @@ needs the app plus your ISOs.
 
 ## Create the USB
 
+Grab a prebuilt `BOOTX64.EFI` from the [Releases](../../releases) page, or
+build it yourself (see [Build from source](#build-from-source)).
+
 ### Simplest — one FAT32 partition (ISOs under 4 GB)
 
 No script, no partitioning. Format the USB as **FAT32** in Explorer, then copy

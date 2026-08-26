@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
+      - name: Unit tests (host)
+        run: cargo test -p remboot-core --release
+      - name: Build app (UEFI)
+        run: cargo build -p remboot --release --target x86_64-unknown-uefi
+      - name: Stage BOOTX64.EFI
+        run: cp target/x86_64-unknown-uefi/release/remboot.efi BOOTX64.EFI
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BOOTX64.EFI
+          path: BOOTX64.EFI

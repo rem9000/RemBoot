@@ -1,0 +1,27 @@
+name: Release
+
+# Cut a release by pushing a version tag:  git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
+      - name: Build app (UEFI)
+        run: cargo build -p remboot --release --target x86_64-unknown-uefi
+      - name: Stage BOOTX64.EFI
+        run: cp target/x86_64-unknown-uefi/release/remboot.efi BOOTX64.EFI
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: BOOTX64.EFI
+          generate_release_notes: true
