@@ -216,8 +216,14 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
         s.push_str(&format!("Copy-Item -Force '@CONFIG@' \"{dst}`:\\remboot.conf\"\n"));
     }
 
-    // Fill placeholders (PowerShell string literals: escape ' as '').
-    let lit = |p: &Path| p.display().to_string().replace('\'', "''");
+    // Fill placeholders. std::fs::canonicalize yields a \\?\ verbatim path,
+    // which makes Get-ChildItem silently match nothing — strip it. Then escape
+    // ' as '' for the PowerShell single-quoted literal.
+    let lit = |p: &Path| {
+        let s = p.to_string_lossy();
+        let clean = s.strip_prefix(r"\\?\").unwrap_or(&s);
+        clean.replace('\'', "''")
+    };
     let mut script = s
         .replace("@DISK@", &target.id)
         .replace("@ESP@", &args.esp_mb.to_string())
