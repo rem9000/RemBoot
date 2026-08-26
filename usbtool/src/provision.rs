@@ -53,6 +53,7 @@ fn efi_file(explicit: &Path) -> Result<PathBuf, String> {
 }
 
 /// Copy the ISO folder (if any) and a remboot.conf seed into `dst`.
+#[allow(dead_code)] // used on Linux/macOS; Windows copies via PowerShell
 fn copy_payload(dst: &Path, args: &CreateArgs) -> Result<(), String> {
     if let Some(isos) = &args.isos {
         let entries = fs::read_dir(isos).map_err(|e| format!("read {}: {e}", isos.display()))?;
@@ -78,6 +79,7 @@ fn copy_payload(dst: &Path, args: &CreateArgs) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)] // used on Linux/macOS; Windows copies via PowerShell
 fn copy_app(esp_root: &Path, efi: &Path) -> Result<(), String> {
     let boot = esp_root.join("EFI").join("BOOT");
     fs::create_dir_all(&boot).map_err(|e| format!("mkdir EFI/BOOT: {e}"))?;
@@ -180,40 +182,63 @@ fn unmount(mnt: &Path) {
 
 #[cfg(target_os = "windows")]
 pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
-    // Reuse the proven PowerShell Storage-cmdlet flow (see tools/make-usb.ps1).
     let efi = efi_file(&args.efi)?.canonicalize().map_err(|e| e.to_string())?;
-    let esp_type = "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}";
-    let mut ps = String::new();
-    ps.push_str(&format!(
-        "$ErrorActionPreference='Stop';\
-         Clear-Disk -Number {n} -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue;\
-         Initialize-Disk -Number {n} -PartitionStyle GPT -ErrorAction SilentlyContinue | Out-Null;\
-         $esp=New-Partition -DiskNumber {n} -Size {esp}MB -GptType '{ty}';\
-         Format-Volume -Partition $esp -FileSystem FAT32 -NewFileSystemLabel REMBOOT -Confirm:$false|Out-Null;\
-         $esp|Add-PartitionAccessPath -AssignDriveLetter;\
-         $S=(Get-Partition -DiskNumber {n} -PartitionNumber $esp.PartitionNumber).DriveLetter;\
-         New-Item -ItemType Directory -Force -Path \"$S`:\\EFI\\BOOT\"|Out-Null;\
-         Copy-Item -Force '{efi}' \"$S`:\\EFI\\BOOT\\BOOTX64.EFI\";",
-        n = target.id, esp = args.esp_mb, ty = esp_type, efi = efi.display()
-    ));
+    let esp_guid = "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}";
+    let dst = if args.simple { "$S" } else { "$D" };
+
+    let mut s = String::new();
+    s.push_str("$ErrorActionPreference='Stop'\n");
+    s.push_str("$n=@DISK@\n");
+    s.push_str("Clear-Disk -Number $n -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue\n");
+    // Convert to GPT reliably: initialise a RAW disk, or convert an MBR one.
+    s.push_str("$d=Get-Disk -Number $n\n");
+    // Keep if/elseif on one line: in PowerShell a newline before `elseif` is a
+    // syntax error.
+    s.push_str("if ($d.PartitionStyle -eq 'RAW') { Initialize-Disk -Number $n -PartitionStyle GPT | Out-Null } elseif ($d.PartitionStyle -ne 'GPT') { Set-Disk -Number $n -PartitionStyle GPT }\n");
+    s.push_str(&format!("$esp=New-Partition -DiskNumber $n -Size @ESP@MB -GptType '{esp_guid}'\n"));
+    s.push_str("Format-Volume -Partition $esp -FileSystem FAT32 -NewFileSystemLabel REMBOOT -Confirm:$false | Out-Null\n");
+    s.push_str("$esp | Add-PartitionAccessPath -AssignDriveLetter | Out-Null\n");
+    s.push_str("$S=(Get-Partition -DiskNumber $n -PartitionNumber $esp.PartitionNumber).DriveLetter\n");
+    s.push_str("New-Item -ItemType Directory -Force -Path \"$S`:\\EFI\\BOOT\" | Out-Null\n");
+    s.push_str("Copy-Item -Force '@EFI@' \"$S`:\\EFI\\BOOT\\BOOTX64.EFI\"\n");
     if !args.simple {
-        ps.push_str(
-            "$data=New-Partition -DiskNumber {n} -UseMaximumSize -AssignDriveLetter;\
-             Format-Volume -Partition $data -FileSystem exFAT -NewFileSystemLabel REMBOOTDATA -Confirm:$false|Out-Null;\
-             $D=(Get-Partition -DiskNumber {n} -PartitionNumber $data.PartitionNumber).DriveLetter;",
-        );
+        s.push_str("$data=New-Partition -DiskNumber $n -UseMaximumSize -AssignDriveLetter\n");
+        s.push_str("Format-Volume -Partition $data -FileSystem exFAT -NewFileSystemLabel REMBOOTDATA -Confirm:$false | Out-Null\n");
+        s.push_str("$D=(Get-Partition -DiskNumber $n -PartitionNumber $data.PartitionNumber).DriveLetter\n");
     }
-    // ISO + config copy target
-    let target_var = if args.simple { "$S" } else { "$D" };
-    if let Some(isos) = &args.isos {
-        let dir = isos.canonicalize().map_err(|e| e.to_string())?;
-        ps.push_str(&format!(
-            "Get-ChildItem -Path '{}' -Filter *.iso -File | ForEach-Object {{ Copy-Item -Force $_.FullName \"{}`:\\$($_.Name)\" }};",
-            dir.display(), target_var
+    if args.isos.is_some() {
+        s.push_str(&format!(
+            "Get-ChildItem -Path '@ISOS@' -Filter *.iso -File | ForEach-Object {{ Copy-Item -Force $_.FullName \"{dst}`:\\$($_.Name)\" }}\n"
         ));
     }
-    let ps = ps.replace("{n}", &target.id);
-    crate::util::run("powershell", &["-NoProfile", "-NonInteractive", "-Command", &ps])
+    let has_config = args.config.as_ref().is_some_and(|c| c.is_file());
+    if has_config {
+        s.push_str(&format!("Copy-Item -Force '@CONFIG@' \"{dst}`:\\remboot.conf\"\n"));
+    }
+
+    // Fill placeholders (PowerShell string literals: escape ' as '').
+    let lit = |p: &Path| p.display().to_string().replace('\'', "''");
+    let mut script = s
+        .replace("@DISK@", &target.id)
+        .replace("@ESP@", &args.esp_mb.to_string())
+        .replace("@EFI@", &lit(&efi));
+    if let Some(isos) = &args.isos {
+        let dir = isos.canonicalize().map_err(|e| e.to_string())?;
+        script = script.replace("@ISOS@", &lit(&dir));
+    }
+    if has_config {
+        let cfg = args.config.as_ref().unwrap().canonicalize().map_err(|e| e.to_string())?;
+        script = script.replace("@CONFIG@", &lit(&cfg));
+    }
+
+    // Run as a script file (avoids -Command quoting headaches).
+    let path = std::env::temp_dir().join("remboot-usb-provision.ps1");
+    fs::write(&path, &script).map_err(|e| format!("write script: {e}"))?;
+    let ps = path.to_string_lossy().into_owned();
+    crate::util::run(
+        "powershell",
+        &["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", &ps],
+    )
 }
 
 // ---------------------------------------------------------------- macOS --
