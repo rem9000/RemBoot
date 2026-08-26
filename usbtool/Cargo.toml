@@ -1,0 +1,13 @@
+[package]
+name = "remboot-usb"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform USB provisioner for RemBoot (partition, format, copy)"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "remboot-usb"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }

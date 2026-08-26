@@ -23,3 +23,14 @@ jobs:
         with:
           name: BOOTX64.EFI
           path: BOOTX64.EFI
+
+  # The USB tool has per-OS back-ends; build on each so all paths compile.
+  usbtool:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p remboot-usb

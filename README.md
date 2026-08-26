@@ -63,6 +63,20 @@ exFAT one.
    ```
    Omit `-IsoSource` to install only the app and copy ISOs later in Explorer.
 
+### Cross-platform tool (Linux / macOS / Windows)
+
+`remboot-usb` provisions a stick from the command line on any OS (it's also the
+backend for the GUI). Build it with `cargo build -p remboot-usb`, then:
+
+```bash
+remboot-usb list                       # find your USB's id
+remboot-usb create --disk /dev/sdb --isos ~/isos     # ERASES the disk
+```
+
+`--simple` makes a single FAT32 stick (ISOs under 4 GB); otherwise it creates
+the FAT32 + exFAT layout. On Linux it needs `gdisk`, `dosfstools` and
+`exfatprogs`; macOS uses `diskutil`; Windows uses the built-in Storage cmdlets.
+
 ### Manual (diskpart)
 
 <details><summary>Without the script</summary>
