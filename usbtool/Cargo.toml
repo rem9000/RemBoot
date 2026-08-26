@@ -9,6 +9,10 @@ license = "GPL-3.0-or-later"
 name = "remboot-usb"
 path = "src/main.rs"
 
+[features]
+# Bake BOOTX64.EFI into the binary (release builds enable this).
+embed-efi = []
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 

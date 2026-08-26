@@ -3,6 +3,7 @@
 /dist/
 __pycache__/
 *.pyc
+/usbtool/embedded-efi.bin
 /vmware/*.vmdk
 /vmware/*.log
 /vmware/*.nvram

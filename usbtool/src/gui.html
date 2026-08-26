@@ -69,8 +69,8 @@
     <h2>2 · What goes on it</h2>
     <div class="field"><div class="k">ISO folder (optional)</div>
       <input id="isos" type="text" placeholder="e.g. C:\Users\me\Desktop\iso  —  copies every *.iso"></div>
-    <div class="field"><div class="k">BOOTX64.EFI</div>
-      <input id="efi" type="text" value="dist/EFI/BOOT/BOOTX64.EFI"></div>
+    <div class="field"><div class="k">Boot app (optional — built in)</div>
+      <input id="efi" type="text" value="" placeholder="leave blank to use the built-in app, or a path to a custom BOOTX64.EFI"></div>
     <label class="opt"><input id="simple" type="checkbox"> Single FAT32 partition (only if every ISO is under 4 GB)</label>
     <div class="field" id="espwrap"><div class="k">Boot partition size (MiB)</div>
       <input id="esp" type="number" value="512" min="64"></div>

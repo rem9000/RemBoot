@@ -1,9 +1,30 @@
 //! Partition + format + copy, per platform.
 
 use crate::disk::Disk;
+use crate::embed;
 use crate::CreateArgs;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// True if we have a BOOTX64.EFI to install (an explicit file or the embedded
+/// copy).
+pub fn efi_available(explicit: &Path) -> bool {
+    explicit.is_file() || embed::EFI.is_some()
+}
+
+/// Return a real path to the app to install: the explicit file, or the
+/// embedded copy written to a temp file.
+fn efi_file(explicit: &Path) -> Result<PathBuf, String> {
+    if explicit.is_file() {
+        return Ok(explicit.to_owned());
+    }
+    if let Some(bytes) = embed::EFI {
+        let p = std::env::temp_dir().join("remboot-BOOTX64.EFI");
+        fs::write(&p, bytes).map_err(|e| format!("stage embedded app: {e}"))?;
+        return Ok(p);
+    }
+    Err(format!("BOOTX64.EFI not found at {}", explicit.display()))
+}
 
 /// Copy the ISO folder (if any) and a remboot.conf seed into `dst`.
 fn copy_payload(dst: &Path, args: &CreateArgs) -> Result<(), String> {
@@ -44,6 +65,7 @@ fn copy_app(esp_root: &Path, efi: &Path) -> Result<(), String> {
 pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
     use crate::util::{run, try_run};
     let dev = target.id.as_str();
+    let efi = efi_file(&args.efi)?;
 
     eprintln!("Partitioning {dev} ...");
     try_run("wipefs", &["-a", dev]);
@@ -71,7 +93,7 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
     let m1 = tempdir("esp")?;
     mount(&p1, &m1)?;
     let r: Result<(), String> = (|| {
-        copy_app(&m1, &args.efi)?;
+        copy_app(&m1, &efi)?;
         if args.simple {
             copy_payload(&m1, args)?;
         }
@@ -133,7 +155,7 @@ fn unmount(mnt: &Path) {
 #[cfg(target_os = "windows")]
 pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
     // Reuse the proven PowerShell Storage-cmdlet flow (see tools/make-usb.ps1).
-    let efi = args.efi.canonicalize().map_err(|e| e.to_string())?;
+    let efi = efi_file(&args.efi)?.canonicalize().map_err(|e| e.to_string())?;
     let esp_type = "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}";
     let mut ps = String::new();
     ps.push_str(&format!(
@@ -184,7 +206,8 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
               "ExFAT", "REMBOOTDATA", "R"],
         )?;
     }
-    copy_app(Path::new("/Volumes/REMBOOT"), &args.efi)?;
+    let efi = efi_file(&args.efi)?;
+    copy_app(Path::new("/Volumes/REMBOOT"), &efi)?;
     let data = if args.simple { "/Volumes/REMBOOT" } else { "/Volumes/REMBOOTDATA" };
     copy_payload(Path::new(data), args)?;
     Ok(())

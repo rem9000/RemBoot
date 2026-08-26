@@ -6,6 +6,7 @@
 //! DESTRUCTIVE: `create` erases the whole target disk.
 
 mod disk;
+mod embed;
 mod gui;
 mod provision;
 mod util;
@@ -111,9 +112,9 @@ fn main() -> ExitCode {
 }
 
 fn run_create(args: CreateArgs) -> Result<(), String> {
-    if !args.efi.is_file() {
+    if !provision::efi_available(&args.efi) {
         return Err(format!(
-            "BOOTX64.EFI not found at {}. Build it first (tools/build.sh) or pass --efi.",
+            "BOOTX64.EFI not found at {} — pass --efi with the path to it.",
             args.efi.display()
         ));
     }

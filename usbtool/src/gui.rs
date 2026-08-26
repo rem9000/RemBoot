@@ -108,7 +108,7 @@ fn create(query: &str) -> String {
         yes: true,
         allow_internal,
     };
-    if !args.efi.is_file() {
+    if !provision::efi_available(&args.efi) {
         return err(&format!("BOOTX64.EFI not found at {}", args.efi.display()));
     }
     match provision::create(&disk, &args) {

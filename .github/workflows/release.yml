@@ -28,8 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
+      - name: Build + embed the app
+        run: |
+          cargo build -p remboot --release --target x86_64-unknown-uefi
+          cp target/x86_64-unknown-uefi/release/remboot.efi usbtool/embedded-efi.bin
       - run: cargo install cargo-deb --locked
-      - run: cargo build -p remboot-usb --release
+      - run: cargo build -p remboot-usb --release --features embed-efi
       - run: cargo deb -p remboot-usb --no-build
       - name: Stage artifacts
         run: |
@@ -46,7 +52,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build -p remboot-usb --release
+        with:
+          targets: x86_64-unknown-uefi
+      - name: Build + embed the app
+        shell: bash
+        run: |
+          cargo build -p remboot --release --target x86_64-unknown-uefi
+          cp target/x86_64-unknown-uefi/release/remboot.efi usbtool/embedded-efi.bin
+      - run: cargo build -p remboot-usb --release --features embed-efi
       - name: Stage artifact
         shell: bash
         run: cp target/release/remboot-usb.exe remboot-usb-windows-x86_64.exe
