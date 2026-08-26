@@ -11,10 +11,15 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 
 pub fn serve(port: u16) -> Result<(), String> {
+    // Fall back to any free port if the preferred one is taken.
     let listener = TcpListener::bind(("127.0.0.1", port))
-        .map_err(|e| format!("cannot bind 127.0.0.1:{port}: {e}"))?;
+        .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
+        .map_err(|e| format!("cannot start the local server: {e}"))?;
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     let url = format!("http://127.0.0.1:{port}/");
-    println!("RemBoot USB — open {url} (Ctrl-C to quit)");
+    println!("RemBoot USB is running.");
+    println!("If your browser didn't open, go to: {url}");
+    println!("(Close this window to quit.)");
     open_browser(&url);
     for stream in listener.incoming() {
         match stream {

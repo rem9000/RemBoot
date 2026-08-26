@@ -15,11 +15,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use util::human;
 
+/// Default port for the GUI's local web server.
+const GUI_PORT: u16 = 8722;
+
 #[derive(Parser)]
 #[command(name = "remboot-usb", about = "Provision a USB stick for RemBoot")]
 struct Cli {
+    /// With no subcommand (e.g. double-clicked), the GUI opens.
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
@@ -31,7 +35,7 @@ enum Cmd {
     /// Open the graphical interface (a local web page).
     Gui {
         /// Port for the local web server.
-        #[arg(long, default_value_t = 8722)]
+        #[arg(long, default_value_t = GUI_PORT)]
         port: u16,
     },
 }
@@ -73,7 +77,9 @@ pub struct CreateArgs {
 }
 
 fn main() -> ExitCode {
-    match Cli::parse().cmd {
+    // No subcommand → GUI, so double-clicking the executable just works.
+    let cmd = Cli::parse().cmd.unwrap_or(Cmd::Gui { port: GUI_PORT });
+    match cmd {
         Cmd::List => match disk::list() {
             Ok(disks) => {
                 if disks.is_empty() {
