@@ -47,6 +47,14 @@ fn handle(mut stream: TcpStream) -> bool {
     match (method, path) {
         ("GET", "/") => send(&mut stream, 200, "text/html; charset=utf-8", PAGE),
         ("GET", "/api/disks") => send(&mut stream, 200, "application/json", &disks_json()),
+        ("GET", "/api/status") => {
+            let body = format!(
+                "{{\"elevated\":{},\"hint\":{}}}",
+                provision::is_elevated(),
+                js(provision::ELEVATION_HINT)
+            );
+            send(&mut stream, 200, "application/json", &body);
+        }
         ("POST", "/api/create") => {
             let body = create(query);
             send(&mut stream, 200, "application/json", &body);
@@ -110,6 +118,12 @@ fn create(query: &str) -> String {
     };
     if !provision::efi_available(&args.efi) {
         return err(&format!("BOOTX64.EFI not found at {}", args.efi.display()));
+    }
+    if !provision::is_elevated() {
+        return err(&format!(
+            "Writing to a disk needs elevated rights — {}, then try again.",
+            provision::ELEVATION_HINT
+        ));
     }
     match provision::create(&disk, &args) {
         Ok(()) => "{\"ok\":true,\"message\":\"Done — the USB is ready.\"}".to_string(),

@@ -12,6 +12,32 @@ pub fn efi_available(explicit: &Path) -> bool {
     explicit.is_file() || embed::EFI.is_some()
 }
 
+/// Are we Administrator (Windows) / root (Unix)? Writing to a raw disk needs it.
+pub fn is_elevated() -> bool {
+    #[cfg(windows)]
+    {
+        crate::util::output(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-Command",
+                "[bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+            ],
+        )
+        .map(|s| s.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        crate::util::output("id", &["-u"]).map(|s| s.trim() == "0").unwrap_or(false)
+    }
+}
+
+#[cfg(windows)]
+pub const ELEVATION_HINT: &str = "right-click the app and choose \u{201c}Run as administrator\u{201d}";
+#[cfg(not(windows))]
+pub const ELEVATION_HINT: &str = "run it with sudo";
+
 /// Return a real path to the app to install: the explicit file, or the
 /// embedded copy written to a temp file.
 fn efi_file(explicit: &Path) -> Result<PathBuf, String> {

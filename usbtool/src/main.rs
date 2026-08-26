@@ -118,6 +118,12 @@ fn run_create(args: CreateArgs) -> Result<(), String> {
             args.efi.display()
         ));
     }
+    if !provision::is_elevated() {
+        return Err(format!(
+            "writing to a disk needs elevated rights — {}.",
+            provision::ELEVATION_HINT
+        ));
+    }
     let target = disk::find(&args.disk)?
         .ok_or_else(|| format!("disk '{}' not found (see `remboot-usb list`)", args.disk))?;
 

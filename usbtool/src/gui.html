@@ -50,6 +50,8 @@
   .danger-note { color:var(--danger); font-size:13px; margin:10px 0; }
   #log { white-space:pre-wrap; background:#070b14; border:1px solid var(--line); border-radius:8px; padding:12px; color:var(--dim); min-height:44px; }
   .muted { color:var(--faint); font-size:13px; }
+  .banner { background:rgba(251,191,36,.12); border:1px solid rgba(251,191,36,.5); color:var(--amber);
+            border-radius:10px; padding:12px 16px; margin-bottom:18px; }
   .bar { display:flex; gap:12px; align-items:center; }
   .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--cyan); border-radius:50%; animation:s 0.8s linear infinite; display:none; }
   @keyframes s { to { transform:rotate(360deg); } }
@@ -59,6 +61,7 @@
 <div class="wrap">
   <h1><b>R</b>EMBOOT USB</h1>
   <div class="sub">Make a bootable RemBoot stick</div>
+  <div id="elev" class="banner" style="display:none"></div>
 
   <div class="card">
     <h2>1 · Choose the USB <button class="ghost" onclick="loadDisks()" style="float:right">refresh</button></h2>
@@ -135,7 +138,17 @@ async function create(){
   el('spin').style.display='none'; sync();
 }
 el('simple').addEventListener('change', ()=>{ el('espwrap').style.display = el('simple').checked ? 'none':'block'; });
+async function checkElev(){
+  try {
+    const r = await fetch('/api/status'); const j = await r.json();
+    if (!j.elevated){
+      const b = el('elev'); b.style.display = 'block';
+      b.textContent = 'Not running as administrator — writing to a disk will fail. Close this and ' + j.hint + ', then reopen.';
+    }
+  } catch(e){}
+}
 loadDisks();
+checkElev();
 </script>
 </body>
 </html>
