@@ -5,6 +5,8 @@ boot from it, pick one, it boots. Works with Linux live/installer ISOs, WinPE
 (Hiren's, HBCD), and rescue tools. No bootloader install step; the stick just
 needs the app plus your ISOs.
 
+![menu](docs/menu.png)
+
 ## Requirements
 
 - A 64-bit UEFI machine. Boot the USB from the firmware boot menu (F12 / F9 / Esc).
@@ -99,6 +101,8 @@ To edit without touching the file: press **E** on an entry, change
 name/version/position, **ENTER** saves (to the boot partition), ESC cancels,
 `↑↓` switches fields.
 
+![config editor](docs/editor.png)
+
 ## Build from source
 
 Everything builds through WSL2 Ubuntu (as root): Rust stable + the
@@ -128,6 +132,13 @@ UEFI firmware can't read exFAT, so RemBoot reads the ISO's extents itself
 virtual CD served on demand ([efi/src/vdisk.rs](efi/src/vdisk.rs)), lets the
 firmware mount it (El Torito + FAT), and chainloads the ISO's own
 `\EFI\BOOT\BOOTX64.EFI`. Nothing is copied into RAM.
+
+Tested end to end with memtest86+, gparted-live (GRUB → Linux) and Hiren's
+BootCD PE (Windows):
+
+| memtest86+ | gparted-live | Hiren's BootCD PE |
+|---|---|---|
+| ![memtest](docs/boot-memtest.png) | ![gparted](docs/boot-gparted-live.png) | ![hbcd](docs/boot-hbcd.png) |
 
 ## License
 
