@@ -20,9 +20,10 @@ use uefi::boot::{EventType, OpenProtocolAttributes, OpenProtocolParams, TimerTri
 use uefi::fs::{FileSystem, Path};
 use uefi::prelude::*;
 use uefi::proto::console::gop::{GraphicsOutput, Mode};
+use uefi::CString16;
 use uefi::proto::console::text::{Key, ScanCode};
 use uefi::proto::media::block::BlockIO;
-use uefi::proto::media::file::FileAttribute;
+use uefi::proto::media::file::{File, FileAttribute, FileMode};
 use uefi::proto::media::fs::SimpleFileSystem;
 use uefi_raw::protocol::block::BlockIoProtocol;
 
@@ -193,9 +194,11 @@ fn read_config() -> String {
     String::new()
 }
 
-/// Locate `name` on an exFAT volume and boot it as a virtual CD. On success
-/// control passes to the ISO's bootloader and this never returns.
+/// Locate `name` and boot it as a virtual CD. Tries exFAT data partitions
+/// first (where big ISOs live), then plain FAT volumes (a simple stick the
+/// firmware can already read). On success this never returns.
 fn boot_iso(name: &str) -> Result<(), &'static str> {
+    // exFAT volumes.
     for handle in boot::find_handles::<BlockIO>().unwrap_or_default() {
         let params = OpenProtocolParams { handle, agent: boot::image_handle(), controller: None };
         let Ok(bio) = (unsafe {
@@ -219,14 +222,48 @@ fn boot_iso(name: &str) -> Result<(), &'static str> {
             continue;
         };
         if let Some(entry) = files.into_iter().find(|f| f.name == name) {
-            log::info!("booting {} ({} bytes, contiguous={})", entry.name, entry.size, entry.contiguous);
+            log::info!("booting {} from exFAT ({} bytes)", entry.name, entry.size);
             // Keep the disk protocol open for the life of the boot: the vdisk
             // callback reads through `raw`.
             core::mem::forget(bio);
-            return vdisk::boot_iso(handle, raw, media_id, block_size, &volume, &entry);
+            return vdisk::boot_iso_exfat(raw, media_id, block_size, &volume, &entry);
         }
     }
-    Err("selected ISO not found on an exFAT volume")
+
+    // FAT volumes (the firmware can read the file itself).
+    let Ok(cname) = CString16::try_from(name) else {
+        return Err("bad ISO name");
+    };
+    for handle in boot::find_handles::<SimpleFileSystem>().unwrap_or_default() {
+        let params = OpenProtocolParams { handle, agent: boot::image_handle(), controller: None };
+        let Ok(mut sfs) = (unsafe {
+            boot::open_protocol::<SimpleFileSystem>(params, OpenProtocolAttributes::GetProtocol)
+        }) else {
+            continue;
+        };
+        let Ok(mut root) = sfs.open_volume() else {
+            continue;
+        };
+        let Ok(fh) = root.open(&cname, FileMode::Read, FileAttribute::empty()) else {
+            continue;
+        };
+        let Some(mut rf) = fh.into_regular_file() else {
+            continue;
+        };
+        // Size via the UEFI "seek to end" convention, then rewind.
+        if rf.set_position(u64::MAX).is_err() {
+            continue;
+        }
+        let Ok(size) = rf.get_position() else { continue };
+        if rf.set_position(0).is_err() {
+            continue;
+        }
+        log::info!("booting {} from FAT ({} bytes)", name, size);
+        // Keep the filesystem protocol open; the vdisk reads the file handle.
+        core::mem::forget(sfs);
+        return vdisk::boot_iso_file(rf, size);
+    }
+    Err("selected ISO not found")
 }
 
 struct App {

@@ -14,21 +14,36 @@ needs the app plus your ISOs.
 - WinPE ISOs (Hiren's, HBCD) load `boot.wim` into a RAM disk; give the machine
   a few GB of free RAM or Windows Boot Manager stops with `0xc0000017`.
 
-## USB layout
+## Create the USB
 
-Two partitions:
+### Simplest — one FAT32 partition (ISOs under 4 GB)
+
+No script, no partitioning. Format the USB as **FAT32** in Explorer, then copy
+onto it:
+
+- `BOOTX64.EFI` into `\EFI\BOOT\`
+- your `*.iso` files in the root
+- optionally `remboot.conf`
+
+That's it — RemBoot reads and boots ISOs straight off the FAT partition. The
+only limit is FAT32's 4 GB max file size, so this works when every ISO is
+under 4 GB.
+
+### Larger ISOs — add an exFAT partition
+
+Some images (Windows, Hiren's, Ubuntu) are 6–10 GB and don't fit on FAT32, so
+put those on a second **exFAT** partition:
 
 | # | Filesystem | Contents |
 |---|------------|----------|
 | 1 | FAT32 (~512 MB) | `\EFI\BOOT\BOOTX64.EFI` |
 | 2 | exFAT (rest) | your `*.iso` files (+ optional `remboot.conf`) |
 
-exFAT is required for the data partition because several ISOs exceed FAT32's
-4 GB file limit.
+RemBoot can't rely on the firmware to read exFAT, so it includes its own
+reader — you just create the two partitions once (below) and drop ISOs on the
+exFAT one.
 
-## Create the USB
-
-### Windows script
+### Windows script (does the two-partition layout for you)
 
 1. Build the app (produces `dist\EFI\BOOT\BOOTX64.EFI`):
    ```bash
@@ -127,10 +142,11 @@ it, `gfx.rs`).
 
 ## How it boots an ISO
 
-UEFI firmware can't read exFAT, so RemBoot reads the ISO's extents itself
-([core/src/exfat.rs](core/src/exfat.rs)), exposes the file to the firmware as a
-virtual CD served on demand ([efi/src/vdisk.rs](efi/src/vdisk.rs)), lets the
-firmware mount it (El Torito + FAT), and chainloads the ISO's own
+RemBoot presents the chosen ISO to the firmware as a virtual CD served on
+demand ([efi/src/vdisk.rs](efi/src/vdisk.rs)) — read straight from a FAT file,
+or from the exFAT partition via its own reader
+([core/src/exfat.rs](core/src/exfat.rs)) since firmware can't mount exFAT. The
+firmware then mounts it (El Torito + FAT) and RemBoot chainloads the ISO's own
 `\EFI\BOOT\BOOTX64.EFI`. Nothing is copied into RAM.
 
 Tested end to end with memtest86+, gparted-live (GRUB → Linux) and Hiren's

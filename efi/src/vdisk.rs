@@ -11,11 +11,13 @@
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 
 use remboot_core::exfat::{self, Extent};
 use uefi::proto::device_path::DevicePath;
 use uefi::proto::device_path::build::{self, DevicePathBuilder};
+use uefi::proto::media::file::RegularFile;
 use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::{Handle, Status, boot, cstr16, guid};
 use uefi_raw::{Boolean, Guid};
@@ -35,6 +37,21 @@ struct MappedExtent {
     len: u64,
 }
 
+/// Where the ISO bytes come from.
+enum Backing {
+    /// exFAT data partition: firmware can't mount it, so we read the real disk
+    /// BlockIO directly using precomputed extents.
+    Exfat {
+        real: *const BlockIoProtocol,
+        media_id: u32,
+        block_size: u64,
+        extents: Vec<MappedExtent>,
+    },
+    /// FAT volume (a simple single-partition stick): the firmware *can* read
+    /// the file, so we pull ISO bytes through its own File protocol.
+    File(UnsafeCell<RegularFile>),
+}
+
 /// Backing store + installed protocol for one virtual CD. `proto` MUST be the
 /// first field: the firmware hands `read_blocks` a `*BlockIoProtocol` that we
 /// cast straight back to `*VDisk`.
@@ -42,62 +59,89 @@ struct MappedExtent {
 struct VDisk {
     proto: BlockIoProtocol,
     media: BlockIoMedia,
-    real: *const BlockIoProtocol,
-    real_media_id: u32,
-    real_block_size: u64,
-    extents: Vec<MappedExtent>,
     file_size: u64,
+    backing: Backing,
 }
 
 impl VDisk {
     /// Read `buf.len()` bytes of the ISO starting at byte `file_off`,
     /// zero-filling past end-of-file.
     fn read_file(&self, file_off: u64, buf: &mut [u8]) -> Result<(), ()> {
-        let mut done = 0usize;
-        while done < buf.len() {
-            let want = file_off + done as u64;
-            if want >= self.file_size {
-                for b in &mut buf[done..] {
-                    *b = 0;
-                }
-                break;
+        match &self.backing {
+            Backing::Exfat { real, media_id, block_size, extents } => {
+                read_exfat(*real, *media_id, *block_size, extents, self.file_size, file_off, buf)
             }
-            let ext = self.extents.iter().find(|e| want >= e.file_start && want < e.file_start + e.len);
-            let Some(ext) = ext else {
-                // Hole in the map (shouldn't happen): zero-fill and stop.
-                for b in &mut buf[done..] {
-                    *b = 0;
+            Backing::File(cell) => {
+                // Sound: the firmware calls this synchronously; no aliasing.
+                let f = unsafe { &mut *cell.get() };
+                f.set_position(file_off).map_err(|_| ())?;
+                let mut done = 0usize;
+                while done < buf.len() {
+                    match f.read(&mut buf[done..]) {
+                        Ok(0) => {
+                            for b in &mut buf[done..] {
+                                *b = 0;
+                            }
+                            break;
+                        }
+                        Ok(n) => done += n,
+                        Err(_) => return Err(()),
+                    }
                 }
-                break;
-            };
-            let into_ext = want - ext.file_start;
-            let avail = (ext.len - into_ext).min((self.file_size - want) as u64);
-            let chunk = avail.min((buf.len() - done) as u64) as usize;
-            self.read_disk(ext.disk_offset + into_ext, &mut buf[done..done + chunk])?;
-            done += chunk;
+                Ok(())
+            }
         }
-        Ok(())
     }
+}
 
-    /// Read an arbitrary byte range from the underlying disk BlockIO, using a
-    /// bounce buffer for the (usually aligned) partial head/tail blocks.
-    fn read_disk(&self, byte_off: u64, buf: &mut [u8]) -> Result<(), ()> {
-        let bs = self.real_block_size;
-        let first = byte_off / bs;
-        let end = (byte_off + buf.len() as u64).div_ceil(bs);
-        let nblocks = end - first;
-        let mut tmp = vec![0u8; (nblocks * bs) as usize];
-        let read = unsafe { (*self.real).read_blocks };
-        let st = unsafe {
-            read(self.real, self.real_media_id, first, tmp.len(), tmp.as_mut_ptr().cast())
-        };
-        if st != Status::SUCCESS {
-            return Err(());
+/// exFAT read: map the file byte range onto disk extents and pull each run
+/// from the real disk BlockIO (bounce buffer for partial head/tail blocks).
+fn read_exfat(
+    real: *const BlockIoProtocol,
+    media_id: u32,
+    block_size: u64,
+    extents: &[MappedExtent],
+    file_size: u64,
+    file_off: u64,
+    buf: &mut [u8],
+) -> Result<(), ()> {
+    let mut done = 0usize;
+    while done < buf.len() {
+        let want = file_off + done as u64;
+        if want >= file_size {
+            for b in &mut buf[done..] {
+                *b = 0;
+            }
+            break;
         }
-        let start = (byte_off - first * bs) as usize;
-        buf.copy_from_slice(&tmp[start..start + buf.len()]);
-        Ok(())
+        let Some(ext) = extents.iter().find(|e| want >= e.file_start && want < e.file_start + e.len)
+        else {
+            for b in &mut buf[done..] {
+                *b = 0;
+            }
+            break;
+        };
+        let into_ext = want - ext.file_start;
+        let avail = (ext.len - into_ext).min(file_size - want);
+        let chunk = avail.min((buf.len() - done) as u64) as usize;
+        read_disk(real, media_id, block_size, ext.disk_offset + into_ext, &mut buf[done..done + chunk])?;
+        done += chunk;
     }
+    Ok(())
+}
+
+fn read_disk(real: *const BlockIoProtocol, media_id: u32, block_size: u64, byte_off: u64, buf: &mut [u8]) -> Result<(), ()> {
+    let first = byte_off / block_size;
+    let end = (byte_off + buf.len() as u64).div_ceil(block_size);
+    let mut tmp = vec![0u8; ((end - first) * block_size) as usize];
+    let read = unsafe { (*real).read_blocks };
+    let st = unsafe { read(real, media_id, first, tmp.len(), tmp.as_mut_ptr().cast()) };
+    if st != Status::SUCCESS {
+        return Err(());
+    }
+    let start = (byte_off - first * block_size) as usize;
+    buf.copy_from_slice(&tmp[start..start + buf.len()]);
+    Ok(())
 }
 
 unsafe extern "efiapi" fn vd_reset(_this: *mut BlockIoProtocol, _ext: Boolean) -> Status {
@@ -143,18 +187,18 @@ unsafe extern "efiapi" fn vd_flush(_this: *mut BlockIoProtocol) -> Status {
     Status::SUCCESS
 }
 
-/// Build, install and connect a virtual CD for `entry` on exFAT `volume`
-/// (backed by disk handle `disk`), then chainload its EFI bootloader.
+/// Boot an ISO that lives on an exFAT partition (firmware can't mount it).
 /// On success this does not return (control passes to the ISO's loader).
-pub fn boot_iso(
-    disk: Handle,
+pub fn boot_iso_exfat(
     real: *const BlockIoProtocol,
     real_media_id: u32,
     real_block_size: u64,
     volume: &exfat::Volume,
     entry: &exfat::FileEntry,
 ) -> Result<(), &'static str> {
-    let _ = disk;
+    if entry.size == 0 {
+        return Err("empty ISO");
+    }
     let raw_extents = resolve_extents(real, real_media_id, real_block_size, volume, entry)?;
     let mut extents = Vec::with_capacity(raw_extents.len());
     let mut file_start = 0u64;
@@ -162,11 +206,21 @@ pub fn boot_iso(
         extents.push(MappedExtent { file_start, disk_offset: e.disk_offset, len: e.len });
         file_start += e.len;
     }
-    if entry.size == 0 {
+    let backing = Backing::Exfat { real, media_id: real_media_id, block_size: real_block_size, extents };
+    launch(make_vdisk(entry.size, backing))
+}
+
+/// Boot an ISO that lives on a FAT volume the firmware can already read (a
+/// simple single-partition stick). `file` is an open handle to the ISO.
+pub fn boot_iso_file(file: RegularFile, size: u64) -> Result<(), &'static str> {
+    if size == 0 {
         return Err("empty ISO");
     }
-    let last_block = entry.size.div_ceil(CD_BLOCK) - 1;
+    launch(make_vdisk(size, Backing::File(UnsafeCell::new(file))))
+}
 
+fn make_vdisk(file_size: u64, backing: Backing) -> Box<VDisk> {
+    let last_block = file_size.div_ceil(CD_BLOCK) - 1;
     let mut vd = Box::new(VDisk {
         proto: BlockIoProtocol {
             revision: 1,
@@ -190,15 +244,17 @@ pub fn boot_iso(
             logical_blocks_per_physical_block: 1,
             optimal_transfer_length_granularity: 1,
         },
-        real,
-        real_media_id,
-        real_block_size,
-        extents,
-        file_size: entry.size,
+        file_size,
+        backing,
     });
     // Self-referential pointer, fixed once the Box has a stable address.
     vd.proto.media = &vd.media as *const BlockIoMedia;
+    vd
+}
 
+/// Install the virtual CD, let the firmware bind El Torito + FAT, and
+/// chainload the ISO's EFI bootloader. Does not return on success.
+fn launch(vd: Box<VDisk>) -> Result<(), &'static str> {
     // Leak: the firmware keeps these pointers for the lifetime of the boot.
     let vd: &'static mut VDisk = Box::leak(vd);
     let proto_ptr: *const BlockIoProtocol = &vd.proto;
