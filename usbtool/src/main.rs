@@ -152,8 +152,9 @@ fn run_create(args: CreateArgs) -> Result<(), String> {
         return Ok(());
     }
 
-    provision::create(&target, &args)?;
-    eprintln!("\nDone. RemBoot USB is ready. Boot the target PC from it (UEFI, Secure Boot off).");
+    let log = provision::create(&target, &args)?;
+    eprintln!("\n{log}");
+    eprintln!("Boot the target PC from it (UEFI, Secure Boot off).");
     Ok(())
 }
 

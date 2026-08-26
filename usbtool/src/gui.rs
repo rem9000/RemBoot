@@ -126,7 +126,7 @@ fn create(query: &str) -> String {
         ));
     }
     match provision::create(&disk, &args) {
-        Ok(()) => "{\"ok\":true,\"message\":\"Done — the USB is ready.\"}".to_string(),
+        Ok(log) => format!("{{\"ok\":true,\"message\":{}}}", js(&log)),
         Err(e) => err(&e),
     }
 }

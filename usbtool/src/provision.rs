@@ -90,7 +90,7 @@ fn copy_app(esp_root: &Path, efi: &Path) -> Result<(), String> {
 // ---------------------------------------------------------------- Linux --
 
 #[cfg(target_os = "linux")]
-pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
+pub fn create(target: &Disk, args: &CreateArgs) -> Result<String, String> {
     use crate::util::{run, try_run};
     let dev = target.id.as_str();
     let efi = efi_file(&args.efi)?;
@@ -142,7 +142,7 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
         unmount(&m2);
         r?;
     }
-    Ok(())
+    Ok("The USB is ready.".into())
 }
 
 #[cfg(target_os = "linux")]
@@ -181,7 +181,7 @@ fn unmount(mnt: &Path) {
 // -------------------------------------------------------------- Windows --
 
 #[cfg(target_os = "windows")]
-pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
+pub fn create(target: &Disk, args: &CreateArgs) -> Result<String, String> {
     let efi = efi_file(&args.efi)?.canonicalize().map_err(|e| e.to_string())?;
     let esp_guid = "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}";
     let dst = if args.simple { "$S" } else { "$D" };
@@ -192,8 +192,7 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
     s.push_str("Clear-Disk -Number $n -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue\n");
     // Convert to GPT reliably: initialise a RAW disk, or convert an MBR one.
     s.push_str("$d=Get-Disk -Number $n\n");
-    // Keep if/elseif on one line: in PowerShell a newline before `elseif` is a
-    // syntax error.
+    // In PowerShell a newline before `elseif` is a syntax error — keep on one line.
     s.push_str("if ($d.PartitionStyle -eq 'RAW') { Initialize-Disk -Number $n -PartitionStyle GPT | Out-Null } elseif ($d.PartitionStyle -ne 'GPT') { Set-Disk -Number $n -PartitionStyle GPT }\n");
     s.push_str(&format!("$esp=New-Partition -DiskNumber $n -Size @ESP@MB -GptType '{esp_guid}'\n"));
     s.push_str("Format-Volume -Partition $esp -FileSystem FAT32 -NewFileSystemLabel REMBOOT -Confirm:$false | Out-Null\n");
@@ -201,23 +200,28 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
     s.push_str("$S=(Get-Partition -DiskNumber $n -PartitionNumber $esp.PartitionNumber).DriveLetter\n");
     s.push_str("New-Item -ItemType Directory -Force -Path \"$S`:\\EFI\\BOOT\" | Out-Null\n");
     s.push_str("Copy-Item -Force '@EFI@' \"$S`:\\EFI\\BOOT\\BOOTX64.EFI\"\n");
+    s.push_str("Write-Output \"Installed the app on $S`:\"\n");
     if !args.simple {
-        s.push_str("$data=New-Partition -DiskNumber $n -UseMaximumSize -AssignDriveLetter\n");
+        // Assign the data-partition letter after formatting (like the ESP).
+        s.push_str("$data=New-Partition -DiskNumber $n -UseMaximumSize\n");
         s.push_str("Format-Volume -Partition $data -FileSystem exFAT -NewFileSystemLabel REMBOOTDATA -Confirm:$false | Out-Null\n");
+        s.push_str("$data | Add-PartitionAccessPath -AssignDriveLetter | Out-Null\n");
         s.push_str("$D=(Get-Partition -DiskNumber $n -PartitionNumber $data.PartitionNumber).DriveLetter\n");
     }
     if args.isos.is_some() {
-        s.push_str(&format!(
-            "Get-ChildItem -Path '@ISOS@' -Filter *.iso -File | ForEach-Object {{ Copy-Item -Force $_.FullName \"{dst}`:\\$($_.Name)\" }}\n"
-        ));
+        s.push_str("$src='@ISOS@'\n");
+        s.push_str("$isos=@(Get-ChildItem -LiteralPath $src -Filter *.iso -File)\n");
+        s.push_str(&format!("Write-Output \"Found $($isos.Count) ISO(s) in $src - copying to {dst}`:\"\n"));
+        s.push_str(&format!("$isos | ForEach-Object {{ Copy-Item -Force -LiteralPath $_.FullName -Destination \"{dst}`:\\$($_.Name)\"; Write-Output (\"  copied \" + $_.Name) }}\n"));
     }
     let has_config = args.config.as_ref().is_some_and(|c| c.is_file());
     if has_config {
-        s.push_str(&format!("Copy-Item -Force '@CONFIG@' \"{dst}`:\\remboot.conf\"\n"));
+        s.push_str(&format!("Copy-Item -Force -LiteralPath '@CONFIG@' -Destination \"{dst}`:\\remboot.conf\"\n"));
     }
+    s.push_str("Write-Output 'The USB is ready.'\n");
 
     // Fill placeholders. std::fs::canonicalize yields a \\?\ verbatim path,
-    // which makes Get-ChildItem silently match nothing — strip it. Then escape
+    // under which Get-ChildItem silently matches nothing — strip it. Then escape
     // ' as '' for the PowerShell single-quoted literal.
     let lit = |p: &Path| {
         let s = p.to_string_lossy();
@@ -229,7 +233,7 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
         .replace("@ESP@", &args.esp_mb.to_string())
         .replace("@EFI@", &lit(&efi));
     if let Some(isos) = &args.isos {
-        let dir = isos.canonicalize().map_err(|e| e.to_string())?;
+        let dir = isos.canonicalize().map_err(|e| format!("ISO folder: {e}"))?;
         script = script.replace("@ISOS@", &lit(&dir));
     }
     if has_config {
@@ -237,20 +241,22 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
         script = script.replace("@CONFIG@", &lit(&cfg));
     }
 
-    // Run as a script file (avoids -Command quoting headaches).
+    // Run as a script file (avoids -Command quoting headaches); capture output
+    // so the GUI shows exactly what happened.
     let path = std::env::temp_dir().join("remboot-usb-provision.ps1");
     fs::write(&path, &script).map_err(|e| format!("write script: {e}"))?;
     let ps = path.to_string_lossy().into_owned();
-    crate::util::run(
+    crate::util::output(
         "powershell",
         &["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", &ps],
     )
+    .map(|out| out.trim().to_string())
 }
 
 // ---------------------------------------------------------------- macOS --
 
 #[cfg(target_os = "macos")]
-pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
+pub fn create(target: &Disk, args: &CreateArgs) -> Result<String, String> {
     use crate::util::run;
     let id = target.id.as_str();
     if args.simple {
@@ -267,10 +273,10 @@ pub fn create(target: &Disk, args: &CreateArgs) -> Result<(), String> {
     copy_app(Path::new("/Volumes/REMBOOT"), &efi)?;
     let data = if args.simple { "/Volumes/REMBOOT" } else { "/Volumes/REMBOOTDATA" };
     copy_payload(Path::new(data), args)?;
-    Ok(())
+    Ok("The USB is ready.".into())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-pub fn create(_t: &Disk, _a: &CreateArgs) -> Result<(), String> {
+pub fn create(_t: &Disk, _a: &CreateArgs) -> Result<String, String> {
     Err("unsupported platform".into())
 }
